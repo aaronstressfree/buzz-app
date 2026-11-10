@@ -75,6 +75,23 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
   async function current(signal = lifetime, fresh = true) {
     const active = AbortSignal.any([lifetime, generation.signal, signal]);
     active.throwIfAborted();
+    // Fresh reads precede writes. Moves come in quick runs, and the record
+    // refuses a second save within the same second: wait it out, not fail.
+    const wait = fresh
+      ? (Math.floor(lastSave / 1000) + 1) * 1000 - Date.now()
+      : 0;
+    if (wait > 0)
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, wait);
+        active.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timer);
+            reject(active.reason);
+          },
+          { once: true },
+        );
+      });
     if (fresh || kit.snapshot().status !== "ready") await kit.refresh();
     active.throwIfAborted();
     const state = kit.snapshot();
@@ -196,26 +213,6 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
     groupsOnly: true,
     writeOrder: (sectionIds, signal) =>
       serialize(async () => {
-        // Moves come in quick runs, and a replaceable record refuses a second
-        // save within the same second. Wait it out instead of failing.
-        const wait = (Math.floor(lastSave / 1000) + 1) * 1000 - Date.now();
-        if (wait > 0)
-          await new Promise<void>((resolve, reject) => {
-            const abort = AbortSignal.any([
-              lifetime,
-              generation.signal,
-              signal,
-            ]);
-            const timer = setTimeout(resolve, wait);
-            abort.addEventListener(
-              "abort",
-              () => {
-                clearTimeout(timer);
-                reject(abort.reason);
-              },
-              { once: true },
-            );
-          });
         const { value, entry, active } = await current(signal);
         // Workspaces missing from the intent (added elsewhere) keep their
         // relative order after the ones it places.

@@ -288,6 +288,10 @@ it("reorders workspaces from their menus and keeps Chats last", async () => {
   ).toHaveAttribute("aria-disabled", "true");
   await user.click(screen.getByRole("menuitem", { name: "Move down" }));
   await waitFor(() => expect(headings()).toEqual(["Home", "Work", "Chats"]));
+  // The moved workspace keeps focus after its section relocates.
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Work" })).toHaveFocus(),
+  );
   expect(h.reorder).toHaveBeenCalledWith(["home", "work"], expect.anything());
   expect(h.saved().sections.map(({ id }) => id)).toEqual(["home", "work"]);
   await user.click(screen.getByRole("button", { name: "Actions for Work" }));

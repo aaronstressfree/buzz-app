@@ -807,6 +807,9 @@ export function SoloWorkspaces({
       {snapshot.orderError && (
         <div role="alert" className={styles.listMessage}>
           <p>Couldn’t save the workspace order. {snapshot.orderError.error}</p>
+          {!orderWritable && (
+            <p>Refresh saved workspaces before retrying this move.</p>
+          )}
           <Button
             disabled={!orderWritable}
             onClick={() => {
