@@ -56,6 +56,8 @@ function admit(value: Groups, entry: KitEntry | undefined) {
 /** Reuse recipe revision checks/outbox and preference lifecycle; never read Messages groups. */
 export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
   let mutations = Promise.resolve();
+  /** When this store last saved; replaceable records need a later second. */
+  let lastSave = 0;
   let generation = new AbortController();
   const serialize = <T>(operation: () => Promise<T>): Promise<T> => {
     const admitted = generation.signal;
@@ -94,7 +96,11 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
     active: AbortSignal,
   ) {
     admit(value, entry);
-    await kit.save(value, entry?.eventId, false, active);
+    try {
+      await kit.save(value, entry?.eventId, false, active);
+    } finally {
+      lastSave = Date.now();
+    }
     active.throwIfAborted();
     const confirmed = soloGroups(kit.snapshot().entries);
     if (
@@ -190,6 +196,26 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
     groupsOnly: true,
     writeOrder: (sectionIds, signal) =>
       serialize(async () => {
+        // Moves come in quick runs, and a replaceable record refuses a second
+        // save within the same second. Wait it out instead of failing.
+        const wait = (Math.floor(lastSave / 1000) + 1) * 1000 - Date.now();
+        if (wait > 0)
+          await new Promise<void>((resolve, reject) => {
+            const abort = AbortSignal.any([
+              lifetime,
+              generation.signal,
+              signal,
+            ]);
+            const timer = setTimeout(resolve, wait);
+            abort.addEventListener(
+              "abort",
+              () => {
+                clearTimeout(timer);
+                reject(abort.reason);
+              },
+              { once: true },
+            );
+          });
         const { value, entry, active } = await current(signal);
         // Workspaces missing from the intent (added elsewhere) keep their
         // relative order after the ones it places.

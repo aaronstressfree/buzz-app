@@ -246,6 +246,13 @@ export function SoloWorkspaces({
   )?.id;
   const groupIds = groups.map((group) => group.id);
   const orderWritable = preferences.sectionOrderWritable;
+  // The order notice unmounts on Retry or Dismiss; its workspace keeps focus.
+  const focusProject = (id: string) =>
+    document
+      .querySelector<HTMLElement>(
+        `[data-solo-menu-id="project-${CSS.escape(id)}"] button`,
+      )
+      ?.focus({ preventScroll: true });
   const moveProject = (id: string, to: number) => {
     const next = groupIds.filter((key) => key !== id);
     next.splice(to, 0, id);
@@ -462,7 +469,7 @@ export function SoloWorkspaces({
         }
         overlay={(id, group) => {
           if (group) {
-            const project = groups.find((group) => DROP + group.id === id);
+            const project = groups.find(({ id: key }) => DROP + key === id);
             return (
               project && (
                 <div className={channelStyles.channelDragOverlay}>
@@ -512,22 +519,32 @@ export function SoloWorkspaces({
                   <MenuItem onClick={() => setSettingsFor(project)}>
                     Workspace settings
                   </MenuItem>
-                  <MenuItem
-                    disabled={!orderWritable || groupIds[0] === project.id}
-                    onClick={() =>
-                      moveProject(project.id, groupIds.indexOf(project.id) - 1)
-                    }
-                  >
-                    Move up
-                  </MenuItem>
-                  <MenuItem
-                    disabled={!orderWritable || groupIds.at(-1) === project.id}
-                    onClick={() =>
-                      moveProject(project.id, groupIds.indexOf(project.id) + 1)
-                    }
-                  >
-                    Move down
-                  </MenuItem>
+                  {orderWritable && (
+                    <>
+                      <MenuItem
+                        disabled={groupIds[0] === project.id}
+                        onClick={() =>
+                          moveProject(
+                            project.id,
+                            groupIds.indexOf(project.id) - 1,
+                          )
+                        }
+                      >
+                        Move up
+                      </MenuItem>
+                      <MenuItem
+                        disabled={groupIds.at(-1) === project.id}
+                        onClick={() =>
+                          moveProject(
+                            project.id,
+                            groupIds.indexOf(project.id) + 1,
+                          )
+                        }
+                      >
+                        Move down
+                      </MenuItem>
+                    </>
+                  )}
                   <MenuItem
                     tone="danger"
                     data-delete-solo-project=""
@@ -787,6 +804,33 @@ export function SoloWorkspaces({
             </Button>
           </div>
         ))}
+      {snapshot.orderError && (
+        <div role="alert" className={styles.listMessage}>
+          <p>Couldn’t save the workspace order. {snapshot.orderError.error}</p>
+          <Button
+            disabled={!orderWritable}
+            onClick={() => {
+              const failed = snapshot.orderError;
+              if (!failed) return;
+              void preferences
+                .reorderSections(failed.sectionId, failed.sectionIds)
+                .catch(() => {});
+              focusProject(failed.sectionId);
+            }}
+          >
+            Retry move
+          </Button>
+          <Button
+            onClick={() => {
+              const failed = snapshot.orderError;
+              preferences.dismissOrderError();
+              if (failed) focusProject(failed.sectionId);
+            }}
+          >
+            Dismiss
+          </Button>
+        </div>
+      )}
       {settingsFor && (
         <WorkspaceSettings
           key={settingsFor.id}
@@ -910,10 +954,10 @@ const SoloChatEntry = memo(function SoloChatEntry({
   );
 });
 
-/** A drop reports only its destination, so it saves exactly like Move to. */
 const ProjectDragHandle =
   createContext<ReturnType<typeof useSidebarGroup>["dragHandle"]>(undefined);
 
+/** A drop reports only its destination, so it saves exactly like Move to. */
 function DropProject({
   projectKey,
   groupIndex,

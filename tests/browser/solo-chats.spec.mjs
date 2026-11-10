@@ -1458,4 +1458,18 @@ test("dragging a workspace heading reorders workspaces and reloads in order", as
 
   await page.reload();
   await expect.poll(order).toEqual(["Home", "Work", "Chats"]);
+
+  // Chats is not a workspace drop target, so it stays last.
+  const work = await heading("Work").boundingBox();
+  const chats = await heading("Chats").boundingBox();
+  await page.mouse.move(work.x + work.width / 2, work.y + work.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(chats.x + chats.width / 2, chats.y + chats.height / 2, {
+    steps: 8,
+  });
+  await expect(sidebar.locator("[data-section-dragging]")).toBeVisible();
+  await expect(sidebar.locator("[data-drop-edge]")).toHaveCount(0);
+  await page.mouse.up();
+  await expect.poll(order).toEqual(["Home", "Work", "Chats"]);
+  expect(app.report.sidebarPublications).toHaveLength(3);
 });

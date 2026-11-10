@@ -388,6 +388,33 @@ it("saves a workspace reorder as the Solo groups order, keeping unplaced workspa
   }
 });
 
+it("waits out the same-second save limit for back-to-back workspace moves", async () => {
+  const f = fixture();
+  // Real time: the relay refuses a replaceable save within the same second.
+  vi.mocked(Date.now).mockRestore();
+  try {
+    f.install({
+      ...groups,
+      groups: [
+        { id: "work", name: "Solo work", defaultTemplateId: "template" },
+        { id: "home", name: "Home", defaultTemplateId: "" },
+      ],
+    });
+    const solo = f.session.soloPreferences;
+    await solo.ensure();
+    await solo.reorderSections("home", ["home", "work"]);
+    await solo.reorderSections("work", ["work", "home"]);
+    expect(solo.snapshot().orderError).toBeUndefined();
+    expect(solo.snapshot().data?.sections.map(({ id }) => id)).toEqual([
+      "work",
+      "home",
+    ]);
+    expect(f.publish).toHaveBeenCalledTimes(2);
+  } finally {
+    f.dispose();
+  }
+});
+
 it("checks the exact project capacity before saving and reclaims a removed filing", async () => {
   const f = fixture();
   const value: Groups = {

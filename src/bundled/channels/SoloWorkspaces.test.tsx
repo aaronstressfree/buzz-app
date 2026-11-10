@@ -89,7 +89,11 @@ function fixture(projectName = "Work") {
     saved = {
       ...saved,
       sections: [...saved.sections]
-        .sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id))
+        .sort(
+          (a, b) =>
+            (ids.indexOf(a.id) + 1 || Infinity) -
+            (ids.indexOf(b.id) + 1 || Infinity),
+        )
         .map((section, order) => ({ ...section, order })),
     };
     return saved;
@@ -290,6 +294,29 @@ it("reorders workspaces from their menus and keeps Chats last", async () => {
   expect(
     await screen.findByRole("menuitem", { name: "Move down" }),
   ).toHaveAttribute("aria-disabled", "true");
+  owner.dispose();
+});
+
+it("reports a failed workspace move with Retry, keeping focus on the workspace", async () => {
+  const h = fixture();
+  const owner = h.store();
+  const user = userEvent.setup();
+  await owner.queries.ensure();
+  await owner.queries.createAndAssign("other", { id: "home", name: "Home" });
+  render(h.view(owner.queries));
+  h.reorder.mockRejectedValueOnce(new Error("Relay unavailable"));
+  await user.click(screen.getByRole("button", { name: "Actions for Home" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Move up" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Couldn’t save the workspace order. Relay unavailable",
+  );
+  expect(h.saved().sections.map(({ id }) => id)).toEqual(["work", "home"]);
+  await user.click(screen.getByRole("button", { name: "Retry move" }));
+  await waitFor(() =>
+    expect(h.saved().sections.map(({ id }) => id)).toEqual(["home", "work"]),
+  );
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByRole("button", { name: "Home" })).toHaveFocus();
   owner.dispose();
 });
 
