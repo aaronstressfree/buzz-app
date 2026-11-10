@@ -354,6 +354,40 @@ it("confirms native-shaped reordered assignment maps without losing group order"
   }
 });
 
+it("saves a workspace reorder as the Solo groups order, keeping unplaced workspaces after", async () => {
+  const f = fixture();
+  try {
+    f.install({
+      ...groups,
+      groups: [
+        { id: "work", name: "Solo work", defaultTemplateId: "template" },
+        { id: "home", name: "Home", defaultTemplateId: "" },
+        { id: "late", name: "Added elsewhere", defaultTemplateId: "" },
+      ],
+    });
+    const solo = f.session.soloPreferences;
+    await solo.ensure();
+    expect(solo.sectionOrderWritable).toBe(true);
+    await solo.reorderSections("work", ["work"]);
+    expect(f.publish).not.toHaveBeenCalled();
+    await solo.reorderSections("home", ["home", "work"]);
+    expect(solo.snapshot().data?.sections.map(({ id }) => id)).toEqual([
+      "home",
+      "work",
+      "late",
+    ]);
+    expect(f.publish).toHaveBeenCalledOnce();
+    const saved = parseKitRecord(
+      JSON.parse(f.publish.mock.calls[0]?.[0].content ?? "{}"),
+      community,
+    ).value as Groups;
+    expect(saved.groups.map(({ id }) => id)).toEqual(["home", "work", "late"]);
+    expect(saved.assignments).toEqual(groups.assignments);
+  } finally {
+    f.dispose();
+  }
+});
+
 it("checks the exact project capacity before saving and reclaims a removed filing", async () => {
   const f = fixture();
   const value: Groups = {

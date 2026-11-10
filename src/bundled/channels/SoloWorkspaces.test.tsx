@@ -85,6 +85,15 @@ function fixture(projectName = "Work") {
     };
     return saved;
   });
+  const reorder = vi.fn(async (ids: readonly string[]) => {
+    saved = {
+      ...saved,
+      sections: [...saved.sections]
+        .sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id))
+        .map((section, order) => ({ ...section, order })),
+    };
+    return saved;
+  });
   const store = () =>
     createSidebarPreferencesStore({
       read: async () => saved,
@@ -92,6 +101,7 @@ function fixture(projectName = "Work") {
       write,
       writeStar: async () => [],
       removeSection: remove,
+      writeOrder: reorder,
       // Groups-only chats have no Messages sort coordinate.
       groupsOnly: true,
     });
@@ -139,6 +149,7 @@ function fixture(projectName = "Work") {
     view,
     write,
     remove,
+    reorder,
     onNew,
     saved: () => saved,
   };
@@ -252,6 +263,33 @@ it("keeps chats after project deletion and allows retry after a rejected deletio
   );
   expect(screen.getByRole("button", { name: "Planning" })).toBeVisible();
   expect(h.saved().assignments).toEqual({});
+  owner.dispose();
+});
+
+it("reorders workspaces from their menus and keeps Chats last", async () => {
+  const h = fixture();
+  const owner = h.store();
+  const user = userEvent.setup();
+  await owner.queries.ensure();
+  await owner.queries.createAndAssign("other", { id: "home", name: "Home" });
+  render(h.view(owner.queries));
+  const headings = () =>
+    screen
+      .getAllByRole("button", { name: /^(Work|Home|Chats)$/ })
+      .map((button) => button.textContent);
+  expect(headings()).toEqual(["Work", "Home", "Chats"]);
+  await user.click(screen.getByRole("button", { name: "Actions for Work" }));
+  expect(
+    await screen.findByRole("menuitem", { name: "Move up" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  await user.click(screen.getByRole("menuitem", { name: "Move down" }));
+  await waitFor(() => expect(headings()).toEqual(["Home", "Work", "Chats"]));
+  expect(h.reorder).toHaveBeenCalledWith(["home", "work"], expect.anything());
+  expect(h.saved().sections.map(({ id }) => id)).toEqual(["home", "work"]);
+  await user.click(screen.getByRole("button", { name: "Actions for Work" }));
+  expect(
+    await screen.findByRole("menuitem", { name: "Move down" }),
+  ).toHaveAttribute("aria-disabled", "true");
   owner.dispose();
 });
 

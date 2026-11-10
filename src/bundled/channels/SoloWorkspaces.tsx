@@ -14,15 +14,17 @@ import {
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import { Collapsible } from "@base-ui/react/collapsible";
-import { useDroppable } from "@dnd-kit/core";
 import {
   ChannelSidebarDnd,
   DraggableChannel,
+  useSidebarGroup,
 } from "../../features/channel-navigation/ChannelSidebarDnd";
 import { WorkspaceSettings } from "../../features/solo/WorkspaceSettings";
 import {
+  createContext,
   memo,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -242,6 +244,13 @@ export function SoloWorkspaces({
   const renamingProject = projects.find((project) =>
     project.rows.some((item) => item.id === renaming),
   )?.id;
+  const groupIds = groups.map((group) => group.id);
+  const orderWritable = preferences.sectionOrderWritable;
+  const moveProject = (id: string, to: number) => {
+    const next = groupIds.filter((key) => key !== id);
+    next.splice(to, 0, id);
+    void preferences.reorderSections(id, next).catch(() => {});
+  };
   const move = (id: string, projectId?: string) => {
     if (prepareSoloMove(session, id)) return;
     const saving = preferences.assign(id, projectId);
@@ -445,9 +454,23 @@ export function SoloWorkspaces({
       <ChannelSidebarDnd
         writable={preferences.writable}
         onMove={(id, key) => move(id, key.slice(DROP.length) || undefined)}
-        // Solo projects keep their saved order; only chats drag.
-        onReorder={() => {}}
-        overlay={(id) => {
+        onReorder={(key, over) =>
+          moveProject(
+            key.slice(DROP.length),
+            groupIds.indexOf(over.slice(DROP.length)),
+          )
+        }
+        overlay={(id, group) => {
+          if (group) {
+            const project = groups.find((group) => DROP + group.id === id);
+            return (
+              project && (
+                <div className={channelStyles.channelDragOverlay}>
+                  <span>{project.name}</span>
+                </div>
+              )
+            );
+          }
           const item = chats.find((item) => item.id === id);
           return (
             item && (
@@ -461,6 +484,8 @@ export function SoloWorkspaces({
         {visible.map((project) => (
           <DropProject
             projectKey={DROP + project.id}
+            groupIndex={groupIds.indexOf(project.id)}
+            reorderable={orderWritable && !!project.id}
             key={project.id}
             className={`${styles.project} ${channelStyles.channelSection}`}
             data-project={project.id ? "" : undefined}
@@ -486,6 +511,22 @@ export function SoloWorkspaces({
                 <>
                   <MenuItem onClick={() => setSettingsFor(project)}>
                     Workspace settings
+                  </MenuItem>
+                  <MenuItem
+                    disabled={!orderWritable || groupIds[0] === project.id}
+                    onClick={() =>
+                      moveProject(project.id, groupIds.indexOf(project.id) - 1)
+                    }
+                  >
+                    Move up
+                  </MenuItem>
+                  <MenuItem
+                    disabled={!orderWritable || groupIds.at(-1) === project.id}
+                    onClick={() =>
+                      moveProject(project.id, groupIds.indexOf(project.id) + 1)
+                    }
+                  >
+                    Move down
                   </MenuItem>
                   <MenuItem
                     tone="danger"
@@ -534,7 +575,7 @@ export function SoloWorkspaces({
                     </>
                   }
                 >
-                  <Collapsible.Trigger
+                  <ProjectTrigger
                     type="button"
                     className={styles.projectHeading}
                     aria-expanded={
@@ -553,7 +594,7 @@ export function SoloWorkspaces({
                     >
                       <CaretDownIcon size={15} strokeWidth={2.5} />
                     </span>
-                  </Collapsible.Trigger>
+                  </ProjectTrigger>
                 </NavigationSectionHeading>
               )}
             </ChatActionsMenu>
@@ -870,18 +911,50 @@ const SoloChatEntry = memo(function SoloChatEntry({
 });
 
 /** A drop reports only its destination, so it saves exactly like Move to. */
+const ProjectDragHandle =
+  createContext<ReturnType<typeof useSidebarGroup>["dragHandle"]>(undefined);
+
 function DropProject({
   projectKey,
+  groupIndex,
+  reorderable,
+  children,
   ...props
-}: ComponentProps<typeof Collapsible.Root> & { projectKey: string }) {
-  const { setNodeRef, isOver, active } = useDroppable({ id: projectKey });
+}: ComponentProps<typeof Collapsible.Root> & {
+  projectKey: string;
+  groupIndex: number;
+  reorderable: boolean;
+}) {
+  const { dropRef, dropTarget, dropEdge, dragHandle, dragging } =
+    useSidebarGroup({
+      sectionKey: projectKey,
+      disabled: false,
+      reorderable,
+      groupIndex,
+    });
   return (
     <Collapsible.Root
       {...props}
-      ref={setNodeRef}
-      data-drop-target={
-        (isOver && active?.data.current?.sectionKey !== projectKey) || undefined
-      }
+      ref={dropRef}
+      data-drop-target={dropTarget || undefined}
+      data-drop-edge={dropEdge}
+      data-section-dragging={dragging || undefined}
+    >
+      <ProjectDragHandle.Provider value={dragHandle}>
+        {children}
+      </ProjectDragHandle.Provider>
+    </Collapsible.Root>
+  );
+}
+
+/** A workspace heading drags its workspace while it can move. */
+function ProjectTrigger(props: ComponentProps<typeof Collapsible.Trigger>) {
+  const dragHandle = useContext(ProjectDragHandle);
+  return (
+    <Collapsible.Trigger
+      ref={dragHandle?.ref}
+      {...dragHandle?.listeners}
+      {...props}
     />
   );
 }

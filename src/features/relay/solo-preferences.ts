@@ -188,6 +188,20 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
         return saved;
       }),
     groupsOnly: true,
+    writeOrder: (sectionIds, signal) =>
+      serialize(async () => {
+        const { value, entry, active } = await current(signal);
+        // Workspaces missing from the intent (added elsewhere) keep their
+        // relative order after the ones it places.
+        const rank = (id: string) =>
+          sectionIds.includes(id) ? sectionIds.indexOf(id) : sectionIds.length;
+        const groups = [...value.groups].sort(
+          (a, b) => rank(a.id) - rank(b.id),
+        );
+        return groups.every((group, index) => group === value.groups[index])
+          ? project(value)
+          : save({ ...value, groups }, entry, active);
+      }),
     createSection: (section, signal) =>
       serialize(async () => {
         const { value, entry, active } = await current(signal);

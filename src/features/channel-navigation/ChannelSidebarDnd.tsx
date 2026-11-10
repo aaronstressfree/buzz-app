@@ -18,6 +18,7 @@ import {
   useState,
   useRef,
   type ComponentProps,
+  type PointerEvent,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
@@ -231,23 +232,26 @@ export function DraggableChannel({
   );
 }
 
-/** A reorderable saved group drags by its header, never its rows or actions. */
-export function DroppableSidebarSection({
+/**
+ * A reorderable saved group drags by its header, never its rows or actions.
+ * Owns the group's drop target, header drag and the click a drag must not
+ * turn into a disclosure toggle.
+ */
+export function useSidebarGroup({
+  sectionKey,
   disabled,
   reorderable,
   groupIndex,
   groupDomain = "channels",
-  createSectionTarget,
-  ...section
-}: ComponentProps<typeof SidebarSection> & {
+}: {
+  sectionKey: string;
   disabled: boolean;
   reorderable: boolean;
   groupIndex: number;
   groupDomain?: string;
-  createSectionTarget?: boolean;
 }) {
   const { setNodeRef, isOver, active } = useDroppable({
-    id: section.sectionKey,
+    id: sectionKey,
     data: { group: reorderable, groupIndex, groupDomain },
     disabled,
     // dnd-kit queues a re-measure of only the droppable that resized and clears
@@ -258,7 +262,7 @@ export function DroppableSidebarSection({
     resizeObserverConfig: { updateMeasurementsFor: [] },
   });
   const drag = useDraggable({
-    id: section.sectionKey,
+    id: sectionKey,
     data: { group: true, groupIndex, groupDomain },
     disabled: !reorderable,
   });
@@ -286,48 +290,65 @@ export function DroppableSidebarSection({
   }, [reorderable]);
   useDndMonitor({
     onDragStart: ({ active }) => {
-      if (active.id === section.sectionKey) suppressClick.current = true;
+      if (active.id === sectionKey) suppressClick.current = true;
     },
   });
   const group = !!active?.data.current?.group;
   const from = active?.data.current?.groupIndex;
+  return {
+    dropRef: setNodeRef,
+    dropTarget:
+      !group && isOver && active?.data.current?.sectionKey !== sectionKey,
+    dropEdge:
+      group && isOver && active?.id !== sectionKey
+        ? from !== undefined && from < groupIndex
+          ? ("after" as const)
+          : ("before" as const)
+        : undefined,
+    dragHandle: reorderable
+      ? {
+          ref: (node: HTMLElement | null) => {
+            handle.current = node;
+            drag.setNodeRef(node);
+          },
+          listeners: {
+            ...drag.listeners,
+            onPointerDown: (event: PointerEvent<HTMLElement>) => {
+              suppressClick.current = false;
+              drag.listeners?.onPointerDown?.(event);
+            },
+          },
+        }
+      : undefined,
+    dragging: drag.isDragging,
+  };
+}
+
+export function DroppableSidebarSection({
+  disabled,
+  reorderable,
+  groupIndex,
+  groupDomain = "channels",
+  createSectionTarget,
+  ...section
+}: ComponentProps<typeof SidebarSection> & {
+  disabled: boolean;
+  reorderable: boolean;
+  groupIndex: number;
+  groupDomain?: string;
+  createSectionTarget?: boolean;
+}) {
+  const group = useSidebarGroup({
+    sectionKey: section.sectionKey,
+    disabled,
+    reorderable,
+    groupIndex,
+    groupDomain,
+  });
   return (
     <>
       {createSectionTarget && <CreateSectionDropTarget />}
-      <SidebarSection
-        {...section}
-        dropRef={setNodeRef}
-        dropTarget={
-          !group &&
-          isOver &&
-          active?.data.current?.sectionKey !== section.sectionKey
-        }
-        dropEdge={
-          group && isOver && active?.id !== section.sectionKey
-            ? from !== undefined && from < groupIndex
-              ? "after"
-              : "before"
-            : undefined
-        }
-        dragHandle={
-          reorderable
-            ? {
-                ref: (node) => {
-                  handle.current = node;
-                  drag.setNodeRef(node);
-                },
-                listeners: {
-                  ...drag.listeners,
-                  onPointerDown: (event) => {
-                    suppressClick.current = false;
-                    drag.listeners?.onPointerDown?.(event);
-                  },
-                },
-              }
-            : undefined
-        }
-        dragging={drag.isDragging}
-      />
+      <SidebarSection {...section} {...group} />
     </>
   );
 }
