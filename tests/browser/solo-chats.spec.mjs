@@ -1395,3 +1395,67 @@ test.describe("Solo send focus", () => {
     await expect(composer).toHaveCSS("outline-style", "none");
   });
 });
+
+test("dragging a workspace heading reorders workspaces and reloads in order", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await newChat(page);
+  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
+  const heading = (name) => sidebar.getByRole("button", { name, exact: true });
+  // Workspace headings in sidebar order; their menu triggers carry no text.
+  const order = async () =>
+    (
+      await sidebar
+        .locator('[data-solo-menu-id^="project-"] button[aria-expanded]')
+        .allTextContents()
+    ).filter(Boolean);
+  const published = async (count) => {
+    await expect
+      .poll(() => app.report.sidebarPublications?.length ?? 0)
+      .toBe(count);
+    // Each replaceable preference write needs a later second.
+    await page.clock.runFor(1_100);
+    return app.report.sidebarPublications
+      .at(-1)
+      .blob.value.groups.map(({ name }) => name);
+  };
+  async function file(chat, name) {
+    await heading(chat).click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();
+    await page.getByRole("menuitem", { name: "New workspace" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(page.locator('[role="menu"]')).toHaveCount(0);
+    const field = dialog.getByRole("textbox", { name: "Workspace name" });
+    await expect(field).toBeFocused();
+    await field.fill(name);
+    await dialog.getByRole("button", { name: "Create and move" }).click();
+    await expect(dialog).toHaveCount(0);
+  }
+  await page.clock.install();
+  await file("Alpha", "Work");
+  await published(1);
+  await file("Beta", "Home");
+  expect(await published(2)).toEqual(["Work", "Home"]);
+  await expect.poll(order).toEqual(["Work", "Home", "Chats"]);
+
+  const from = await heading("Home").boundingBox();
+  const to = await heading("Work").boundingBox();
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, {
+    steps: 8,
+  });
+  await expect(sidebar.locator("[data-section-dragging]")).toBeVisible();
+  await expect(sidebar.locator('[data-drop-edge="before"]')).toHaveCount(1);
+  await page.mouse.up();
+  await expect(sidebar.locator("[data-section-dragging]")).toHaveCount(0);
+  // Releasing the drag does not also toggle the dragged workspace.
+  await expect(heading("Home")).toHaveAttribute("aria-expanded", "true");
+  await expect.poll(order).toEqual(["Home", "Work", "Chats"]);
+  expect(await published(3)).toEqual(["Home", "Work"]);
+
+  await page.reload();
+  await expect.poll(order).toEqual(["Home", "Work", "Chats"]);
+});
