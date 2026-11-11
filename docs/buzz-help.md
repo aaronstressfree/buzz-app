@@ -445,6 +445,9 @@ for 30 days expires.
   a Nexus task, shows the workspace control when its plugin files it; until
   that chat's first message, **#** offers its workspaces too, and choosing one
   files the chat right away.
+  Drag a workspace's heading up or down to reorder it, or use **Move up** and
+  **Move down** in its actions menu. The order syncs to your other devices;
+  **Chats** stays last.
 - **Channel links.** Type **#** and part of a channel name to link a channel.
   The link is a chip: Backspace or Delete removes it whole, so to change it,
   remove it and pick again with **#**.

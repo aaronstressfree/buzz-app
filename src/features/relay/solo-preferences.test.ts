@@ -354,6 +354,67 @@ it("confirms native-shaped reordered assignment maps without losing group order"
   }
 });
 
+it("saves a workspace reorder as the Solo groups order, keeping unplaced workspaces after", async () => {
+  const f = fixture();
+  try {
+    f.install({
+      ...groups,
+      groups: [
+        { id: "work", name: "Solo work", defaultTemplateId: "template" },
+        { id: "home", name: "Home", defaultTemplateId: "" },
+        { id: "late", name: "Added elsewhere", defaultTemplateId: "" },
+      ],
+    });
+    const solo = f.session.soloPreferences;
+    await solo.ensure();
+    expect(solo.sectionOrderWritable).toBe(true);
+    await solo.reorderSections("work", ["work"]);
+    expect(f.publish).not.toHaveBeenCalled();
+    await solo.reorderSections("home", ["home", "work"]);
+    expect(solo.snapshot().data?.sections.map(({ id }) => id)).toEqual([
+      "home",
+      "work",
+      "late",
+    ]);
+    expect(f.publish).toHaveBeenCalledOnce();
+    const saved = parseKitRecord(
+      JSON.parse(f.publish.mock.calls[0]?.[0].content ?? "{}"),
+      community,
+    ).value as Groups;
+    expect(saved.groups.map(({ id }) => id)).toEqual(["home", "work", "late"]);
+    expect(saved.assignments).toEqual(groups.assignments);
+  } finally {
+    f.dispose();
+  }
+});
+
+it("waits out the same-second save limit for back-to-back workspace moves", async () => {
+  const f = fixture();
+  // Real time: the relay refuses a replaceable save within the same second.
+  vi.mocked(Date.now).mockRestore();
+  try {
+    f.install({
+      ...groups,
+      groups: [
+        { id: "work", name: "Solo work", defaultTemplateId: "template" },
+        { id: "home", name: "Home", defaultTemplateId: "" },
+      ],
+    });
+    const solo = f.session.soloPreferences;
+    await solo.ensure();
+    await solo.reorderSections("home", ["home", "work"]);
+    await solo.reorderSections("work", ["work", "home"]);
+    expect(solo.snapshot().orderError).toBeUndefined();
+    expect(solo.snapshot().data?.sections.map(({ id }) => id)).toEqual([
+      "work",
+      "home",
+    ]);
+    expect(f.publish).toHaveBeenCalledTimes(2);
+  } finally {
+    f.dispose();
+  }
+});
+
 it("checks the exact project capacity before saving and reclaims a removed filing", async () => {
   const f = fixture();
   const value: Groups = {

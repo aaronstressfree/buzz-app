@@ -56,6 +56,8 @@ function admit(value: Groups, entry: KitEntry | undefined) {
 /** Reuse recipe revision checks/outbox and preference lifecycle; never read Messages groups. */
 export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
   let mutations = Promise.resolve();
+  /** When this store last saved; replaceable records need a later second. */
+  let lastSave = 0;
   let generation = new AbortController();
   const serialize = <T>(operation: () => Promise<T>): Promise<T> => {
     const admitted = generation.signal;
@@ -73,6 +75,23 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
   async function current(signal = lifetime, fresh = true) {
     const active = AbortSignal.any([lifetime, generation.signal, signal]);
     active.throwIfAborted();
+    // Fresh reads precede writes. Moves come in quick runs, and the record
+    // refuses a second save within the same second: wait it out, not fail.
+    const wait = fresh
+      ? (Math.floor(lastSave / 1000) + 1) * 1000 - Date.now()
+      : 0;
+    if (wait > 0)
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, wait);
+        active.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timer);
+            reject(active.reason);
+          },
+          { once: true },
+        );
+      });
     if (fresh || kit.snapshot().status !== "ready") await kit.refresh();
     active.throwIfAborted();
     const state = kit.snapshot();
@@ -94,7 +113,11 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
     active: AbortSignal,
   ) {
     admit(value, entry);
-    await kit.save(value, entry?.eventId, false, active);
+    try {
+      await kit.save(value, entry?.eventId, false, active);
+    } finally {
+      lastSave = Date.now();
+    }
     active.throwIfAborted();
     const confirmed = soloGroups(kit.snapshot().entries);
     if (
@@ -188,6 +211,20 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
         return saved;
       }),
     groupsOnly: true,
+    writeOrder: (sectionIds, signal) =>
+      serialize(async () => {
+        const { value, entry, active } = await current(signal);
+        // Workspaces missing from the intent (added elsewhere) keep their
+        // relative order after the ones it places.
+        const rank = (id: string) =>
+          sectionIds.includes(id) ? sectionIds.indexOf(id) : sectionIds.length;
+        const groups = [...value.groups].sort(
+          (a, b) => rank(a.id) - rank(b.id),
+        );
+        return groups.every((group, index) => group === value.groups[index])
+          ? project(value)
+          : save({ ...value, groups }, entry, active);
+      }),
     createSection: (section, signal) =>
       serialize(async () => {
         const { value, entry, active } = await current(signal);

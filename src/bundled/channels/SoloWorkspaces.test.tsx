@@ -92,6 +92,19 @@ function fixture(projectName = "Work") {
     };
     return saved;
   });
+  const reorder = vi.fn(async (ids: readonly string[]) => {
+    saved = {
+      ...saved,
+      sections: [...saved.sections]
+        .sort(
+          (a, b) =>
+            (ids.indexOf(a.id) + 1 || Infinity) -
+            (ids.indexOf(b.id) + 1 || Infinity),
+        )
+        .map((section, order) => ({ ...section, order })),
+    };
+    return saved;
+  });
   const store = () =>
     createSidebarPreferencesStore({
       read: async () => saved,
@@ -99,6 +112,7 @@ function fixture(projectName = "Work") {
       write,
       writeStar: async () => [],
       removeSection: remove,
+      writeOrder: reorder,
       // Groups-only chats have no Messages sort coordinate.
       groupsOnly: true,
     });
@@ -148,6 +162,7 @@ function fixture(projectName = "Work") {
     view,
     write,
     remove,
+    reorder,
     onNew,
     saved: () => saved,
   };
@@ -261,6 +276,60 @@ it("keeps chats after project deletion and allows retry after a rejected deletio
   );
   expect(screen.getByRole("button", { name: "Planning" })).toBeVisible();
   expect(h.saved().assignments).toEqual({});
+  owner.dispose();
+});
+
+it("reorders workspaces from their menus and keeps Chats last", async () => {
+  const h = fixture();
+  const owner = h.store();
+  const user = userEvent.setup();
+  await owner.queries.ensure();
+  await owner.queries.createAndAssign("other", { id: "home", name: "Home" });
+  render(h.view(owner.queries));
+  const headings = () =>
+    screen
+      .getAllByRole("button", { name: /^(Work|Home|Chats)$/ })
+      .map((button) => button.textContent);
+  expect(headings()).toEqual(["Work", "Home", "Chats"]);
+  await user.click(screen.getByRole("button", { name: "Actions for Work" }));
+  expect(
+    await screen.findByRole("menuitem", { name: "Move up" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  await user.click(screen.getByRole("menuitem", { name: "Move down" }));
+  await waitFor(() => expect(headings()).toEqual(["Home", "Work", "Chats"]));
+  // The moved workspace keeps focus after its section relocates.
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Work" })).toHaveFocus(),
+  );
+  expect(h.reorder).toHaveBeenCalledWith(["home", "work"], expect.anything());
+  expect(h.saved().sections.map(({ id }) => id)).toEqual(["home", "work"]);
+  await user.click(screen.getByRole("button", { name: "Actions for Work" }));
+  expect(
+    await screen.findByRole("menuitem", { name: "Move down" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  owner.dispose();
+});
+
+it("reports a failed workspace move with Retry, keeping focus on the workspace", async () => {
+  const h = fixture();
+  const owner = h.store();
+  const user = userEvent.setup();
+  await owner.queries.ensure();
+  await owner.queries.createAndAssign("other", { id: "home", name: "Home" });
+  render(h.view(owner.queries));
+  h.reorder.mockRejectedValueOnce(new Error("Relay unavailable"));
+  await user.click(screen.getByRole("button", { name: "Actions for Home" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Move up" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Couldn’t save the workspace order. Relay unavailable",
+  );
+  expect(h.saved().sections.map(({ id }) => id)).toEqual(["work", "home"]);
+  await user.click(screen.getByRole("button", { name: "Retry move" }));
+  await waitFor(() =>
+    expect(h.saved().sections.map(({ id }) => id)).toEqual(["home", "work"]),
+  );
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByRole("button", { name: "Home" })).toHaveFocus();
   owner.dispose();
 });
 
