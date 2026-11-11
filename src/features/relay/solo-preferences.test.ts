@@ -44,12 +44,12 @@ function fixture() {
     starred: [],
     muted: [],
   };
-  const install = (value: KitValue, deleted = false) => {
+  const install = (value: KitValue, deleted = false, createdAt = time++) => {
     const record: KitRecord = { version: 1, community, deleted, value };
     events.push(
       signed(viewer, {
         kind: 30078,
-        created_at: time++,
+        created_at: createdAt,
         tags: [
           ["d", coordinate(record)],
           ["t", kitTag(record)],
@@ -108,6 +108,7 @@ function fixture() {
           rows.map((event) => ({
             eventId: event.id,
             record: JSON.parse(event.content),
+            createdAt: event.created_at,
           })),
         prepare,
       },
@@ -410,6 +411,32 @@ it("waits out the same-second save limit for back-to-back workspace moves", asyn
       "home",
     ]);
     expect(f.publish).toHaveBeenCalledTimes(2);
+  } finally {
+    f.dispose();
+  }
+});
+
+it("waits when another device saved the workspace order this second", async () => {
+  const f = fixture();
+  // Real time: the head below was saved elsewhere in the current second.
+  vi.mocked(Date.now).mockRestore();
+  try {
+    f.install(
+      {
+        ...groups,
+        groups: [
+          { id: "work", name: "Solo work", defaultTemplateId: "template" },
+          { id: "home", name: "Home", defaultTemplateId: "" },
+        ],
+      },
+      false,
+      Math.floor(Date.now() / 1000),
+    );
+    const solo = f.session.soloPreferences;
+    await solo.ensure();
+    await solo.reorderSections("home", ["home", "work"]);
+    expect(solo.snapshot().orderError).toBeUndefined();
+    expect(f.publish).toHaveBeenCalledOnce();
   } finally {
     f.dispose();
   }

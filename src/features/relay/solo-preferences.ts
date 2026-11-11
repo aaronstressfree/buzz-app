@@ -72,14 +72,10 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
     );
     return next;
   };
-  async function current(signal = lifetime, fresh = true) {
-    const active = AbortSignal.any([lifetime, generation.signal, signal]);
-    active.throwIfAborted();
-    // Fresh reads precede writes. Moves come in quick runs, and the record
-    // refuses a second save within the same second: wait it out, not fail.
-    const wait = fresh
-      ? (Math.floor(lastSave / 1000) + 1) * 1000 - Date.now()
-      : 0;
+  // A replaceable record refuses a second save within the same second as
+  // its head. Moves come in quick runs, so writes wait that out, not fail.
+  async function nextSecond(after: number, active: AbortSignal) {
+    const wait = (Math.floor(after / 1000) + 1) * 1000 - Date.now();
     if (wait > 0)
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(resolve, wait);
@@ -92,12 +88,20 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
           { once: true },
         );
       });
+  }
+  async function current(signal = lifetime, fresh = true) {
+    const active = AbortSignal.any([lifetime, generation.signal, signal]);
+    active.throwIfAborted();
+    // Fresh reads precede writes.
+    if (fresh) await nextSecond(lastSave, active);
     if (fresh || kit.snapshot().status !== "ready") await kit.refresh();
     active.throwIfAborted();
     const state = kit.snapshot();
     if (state.status !== "ready")
       throw new Error(state.error ?? "Solo groups are unavailable");
     const entry = soloGroups(state.entries);
+    // Another device may have saved the record in this same second.
+    if (fresh && entry) await nextSecond(entry.createdAt * 1000, active);
     return {
       entry,
       value:
